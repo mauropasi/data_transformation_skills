@@ -1,0 +1,84 @@
+version: 2
+
+sources:
+  - name: ecommerce
+    database: raw_production
+    schema: ecommerce
+    loaded_at_field: _loaded_at
+    freshness:
+      warn_after: {count: 12, period: hour}
+      error_after: {count: 24, period: hour}
+    tables:
+      - name: raw_orders
+        description: "Raw order records directly ingested from Postgres database."
+        columns:
+          - name: id
+            description: "Raw order identifier."
+            tests:
+              - unique:
+                  severity: error
+              - not_null:
+                  severity: error
+
+models:
+  - name: stg_ecommerce__orders
+    description: "Staging model for raw e-commerce orders."
+    columns:
+      - name: order_id
+        description: "Primary key for the order."
+        tests:
+          - unique:
+              severity: error
+          - not_null:
+              severity: error
+
+      - name: customer_id
+        description: "Foreign key to customer."
+        tests:
+          - not_null:
+              severity: error
+          - relationships:
+              to: ref('stg_ecommerce__customers')
+              field: customer_id
+              severity: error
+
+      - name: order_status
+        description: "Current lifecycle status of the order."
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['placed', 'processing', 'shipped', 'delivered', 'cancelled', 'returned']
+              severity: error
+
+  - name: fct_orders
+    description: "Core fact model representing completed and active orders."
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: order_id
+        data_type: string
+        description: "Primary key for fct_orders."
+        tests:
+          - unique:
+              severity: error
+          - not_null:
+              severity: error
+
+      - name: customer_id
+        data_type: string
+        description: "Foreign key referencing dim_customers."
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_customers')
+              field: customer_id
+
+      - name: subtotal_amount_usd
+        data_type: numeric
+        description: "Subtotal monetary amount in USD."
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: "subtotal_amount_usd >= 0"
+              severity: error
