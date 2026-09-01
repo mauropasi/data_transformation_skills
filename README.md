@@ -1,6 +1,6 @@
 # Data Transformation Skills
 
-Opinionated, production-ready AI coding skills for **dbt Data Transformation** (Data Modeling & Test Writing) designed for Google Antigravity (AGY) and Claude Agentic Workflows.
+Modular, production-ready AI coding skills for **dbt Data Transformation** (Source Discovery, Data Modeling & Test Writing) designed for Google Antigravity (AGY) and Claude Agentic Workflows.
 
 ---
 
@@ -8,20 +8,20 @@ Opinionated, production-ready AI coding skills for **dbt Data Transformation** (
 
 This repository contains a modular catalog of AI skills:
 
-| Skill | Folder | Purpose & Scope |
+| Skill | Directory | Purpose & Scope |
 | :--- | :--- | :--- |
-| **dbt Data Modeling** | [`skills/dbt-data-modeling`](./skills/dbt-data-modeling/SKILL.md) | Opinionated standards for dbt model architecture (`staging`, `intermediate`, `marts`), materialization decision matrix (`view`, `table`, `incremental`, `ephemeral`), and CTE layout conventions. |
-| **dbt Testing Best Practices** | [`skills/dbt-testing-best-practices`](./skills/dbt-testing-best-practices/SKILL.md) | Opinionated rules for dbt test coverage, layer-by-layer expectations, generic vs. singular test selection, severity thresholds, and data contracts. |
+| **dbt Source Discovery** | [`skills/dbt-source-discovery`](./skills/dbt-source-discovery/SKILL.md) | Inspects raw tables, infers ingestion patterns (`full_reload`, `incremental_append`, `cdc`), detects delivery guarantees (`at_least_once`), soft deletes, and retention TTLs, enforcing mandatory metadata in `sources.yml`. |
+| **dbt Data Modeling** | [`skills/dbt-data-modeling`](./skills/dbt-data-modeling/SKILL.md) | Opinionated standards for dbt model architecture (`staging`, `intermediate`, `marts`), defensive SQL patterns (CDC window deduplication, status bucketing), materialization decision matrix, and CTE layout. |
+| **dbt Testing Best Practices** | [`skills/dbt-testing-best-practices`](./skills/dbt-testing-best-practices/SKILL.md) | Signal-driven test writing structured by layer: Staging raw data testing (`unique`, `not_null`, `relationships`, `accepted_values` with `severity: warn`), Marts contracts (`contract: enforced: true`), and $0-cost **dbt 1.8+ Unit Testing**. |
 
 ---
 
-## 🛠 How to Use & Iterate
+## 🛠 How to Use & Import
 
 ### Option A: Import into a Target Project (Recommended)
 Copy or symlink the `skills/` directory into your target project's `.agents/skills/` folder:
 
 ```bash
-# Copying skills to a target project
 mkdir -p /path/to/my_dbt_project/.agents/skills
 cp -r skills/* /path/to/my_dbt_project/.agents/skills/
 ```
@@ -36,9 +36,9 @@ cp -r skills/* ~/.gemini/config/skills/
 
 ---
 
-## 🚀 Skill Standard Format
+## 🚀 Skill Architecture & Modularity
 
 Each skill follows the standard **Antigravity / Claude Agentic Skill Specification**:
 - **`SKILL.md`**: Main instruction document with frontmatter metadata (`name`, `description`).
-- **`examples/`**: Reference implementations and code templates.
+- **`examples/`**: Reference implementations and code templates (`sources_template.yml`, `model_template.sql`, `schema_template.yml`).
 - **`references/`**: In-depth operational guides loaded on-demand (progressive disclosure).

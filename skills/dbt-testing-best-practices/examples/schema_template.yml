@@ -1,28 +1,8 @@
 version: 2
 
-sources:
-  - name: ecommerce
-    database: raw_production
-    schema: ecommerce
-    loaded_at_field: _loaded_at
-    freshness:
-      warn_after: {count: 12, period: hour}
-      error_after: {count: 24, period: hour}
-    tables:
-      - name: raw_orders
-        description: "Raw order records directly ingested from Postgres database."
-        columns:
-          - name: id
-            description: "Raw order identifier."
-            tests:
-              - unique:
-                  severity: error
-              - not_null:
-                  severity: error
-
 models:
   - name: stg_ecommerce__orders
-    description: "Staging model for raw e-commerce orders."
+    description: "Staging model for raw e-commerce orders with defensive status mapping."
     columns:
       - name: order_id
         description: "Primary key for the order."
@@ -33,25 +13,24 @@ models:
               severity: error
 
       - name: customer_id
-        description: "Foreign key to customer."
+        description: "Foreign key referencing stg_ecommerce__customers."
         tests:
-          - not_null:
-              severity: error
+          - not_null
           - relationships:
               to: ref('stg_ecommerce__customers')
               field: customer_id
-              severity: error
+              severity: warn
 
       - name: order_status
-        description: "Current lifecycle status of the order."
+        description: "Categorical status with defensive 'other' fallback."
         tests:
           - not_null
           - accepted_values:
-              values: ['placed', 'processing', 'shipped', 'delivered', 'cancelled', 'returned']
-              severity: error
+              values: ['placed', 'processing', 'shipped', 'delivered', 'cancelled', 'returned', 'other']
+              severity: warn
 
   - name: fct_orders
-    description: "Core fact model representing completed and active orders."
+    description: "Core fact table with enforced data contract for BI consumers."
     config:
       contract:
         enforced: true
@@ -65,15 +44,6 @@ models:
           - not_null:
               severity: error
 
-      - name: customer_id
-        data_type: string
-        description: "Foreign key referencing dim_customers."
-        tests:
-          - not_null
-          - relationships:
-              to: ref('dim_customers')
-              field: customer_id
-
       - name: subtotal_amount_usd
         data_type: numeric
         description: "Subtotal monetary amount in USD."
@@ -82,3 +52,14 @@ models:
           - dbt_utils.expression_is_true:
               expression: "subtotal_amount_usd >= 0"
               severity: error
+
+unit_tests:
+  - name: test_fct_orders_calculation
+    model: fct_orders
+    given:
+      - input: ref('stg_ecommerce__orders')
+        rows:
+          - {order_id: '101', customer_id: 'C1', order_status: 'delivered', subtotal_amount_usd: 100.0}
+    expect:
+      rows:
+        - {order_id: '101', customer_id: 'C1', order_status: 'delivered', subtotal_amount_usd: 100.0}

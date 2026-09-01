@@ -1,0 +1,30 @@
+version: 2
+
+sources:
+  - name: ecommerce
+    database: raw_production
+    schema: ecommerce
+    tables:
+      - name: raw_orders
+        description: "Raw order records ingested continuously via Fivetran CDC."
+        loaded_at_field: _fivetran_synced
+        freshness:
+          warn_after: {count: 12, period: hour}
+          error_after: {count: 24, period: hour}
+        meta:
+          ingestion_type: cdc
+          delivery_guarantee: at_least_once
+          soft_delete_column: _fivetran_deleted
+          retention_days: 90
+          lookback_days: 3
+
+      - name: raw_customers
+        description: "Raw customer dimension table reloaded daily via full batch sync."
+        loaded_at_field: _synced_at
+        freshness:
+          warn_after: {count: 24, period: hour}
+        meta:
+          ingestion_type: full_reload
+          delivery_guarantee: exactly_once
+          soft_delete_column: null
+          retention_days: null

@@ -1,88 +1,84 @@
 ---
 name: dbt-testing-best-practices
 description: >-
-  Provides opinionated test writing standards, layer-by-layer test coverage expectations, generic vs singular test guidelines, severity thresholds, and data contract enforcement in dbt. Use when adding tests to schema.yml, defining custom singular tests, or configuring test coverage for dbt models and sources.
+  Provides opinionated, signal-driven dbt test writing standards structured by layer (Staging raw data testing, Marts contracts, and $0-cost unit testing). Consumes source metadata signals (ingestion_type, delivery_guarantee, retention) and profiling metrics to determine test selection, severity: warn vs severity: error, and statistical anomaly checks. Applies Guided Autonomy and provides structured reviews highlighting trade-offs. Use when adding tests to schema.yml, defining unit tests, or configuring test suites for dbt projects.
 ---
 
 # dbt Testing Best Practices & Standards
 
-This skill defines the opinionated rules, layer-by-layer test expectations, generic vs. singular test selection, severity configurations, and data contract enforcement for dbt data transformations.
+This skill defines opinionated, signal-driven testing strategies for dbt analytics engineering projects using **Guided Autonomy**.
 
 ---
 
-## 1. Testing Philosophy & Core Principles
+## 1. Guided Autonomy & Review Principles
 
-1. **Every Model Must Have Tests**: No model should be merged to production without at least primary key uniqueness and non-null assertions.
-2. **Fail Early at Source/Staging**: Catch missing values and schema anomalies in `sources` and `staging` before they propagate to `marts`.
-3. **Test Business Rules at Marts**: Validate aggregations, non-negative metrics, and referential integrity in final fact/dimension tables.
+- **High Signal $\rightarrow$ Act Autonomously**: When profiling signals and lineage are clear (e.g. 100% unique primary key, clean foreign keys, standard status enums), act with full autonomy.
+- **Ambiguity $\rightarrow$ Ask the User**: When data signals are non-obvious (e.g. FK orphan rate > 0%, or ambiguous business value vs descriptive attribute), prompt the user for clarification.
+- **Structured Review Output**: Always accompany generated test suites with a structured engineering summary:
+  - **Intent**: Purpose of the test suite.
+  - **Straightforward Actions**: Tests generated automatically based on strong data signals.
+  - **Trade-Offs & Compromises**: Explicit engineering compromises made (e.g., *"Compromised on multi-table `relationships` tests on view `X` due to high volume, using $0-cost Unit Tests instead."*).
+  - **Questions for User Review**: Non-obvious decisions requiring user sign-off.
 
 ---
 
-## 2. Layer-by-Layer Test Expectations
+## 2. Testing Philosophy by Architectural Layer
+
+Testing responsibilities are strictly separated by architectural layer:
 
 ```
-Sources ──> Staging ──> Intermediate ──> Marts
-  │           │              │             │
-  ▼           ▼              ▼             ▼
-Freshness   PK: Unique      Cardinality   Grain Uniqueness
-Nullability PK: Not Null    Join Safety   Metric Non-Negativity
-            FK: Rel.                      Enum Validity
+[Raw Sources] ──> STAGING LAYER (Raw Data Testing)
+                       │  - Primary Keys (unique, not_null)
+                       │  - Foreign Key Relationships & Orphan Rate Signals
+                       │  - Categorical Attributes (accepted_values with severity: warn)
+                       │  - Descriptive Attributes (Explicitly SKIPPED)
+                       ▼
+                 INTERMEDIATE & MARTS LAYERS (Logic & Integration)
+                       │  - SQL Logic Validation via $0-Cost dbt 1.8+ Unit Tests
+                       │  - Incremental Integration Testing (Batch Merges)
+                       │  - Data Contracts (contract: enforced: true) for BI Consumers
+                       │  - Statistical Anomaly & Proportion Checks
 ```
 
-### Layer Matrix
+---
 
-| Layer | Target Objects | Mandatory Tests | Recommended Optional Tests |
-| :--- | :--- | :--- | :--- |
-| **Sources** | Raw source tables | `loaded_at_field` freshness checks, `not_null` on primary keys | `dbt_expectations.expect_table_columns_to_match_ordered_list` |
-| **Staging** | `stg_` models | `unique` & `not_null` on primary key, `accepted_values` on status/type columns | `relationships` targeting parent staging/source models |
-| **Intermediate** | `int_` models | `unique` & `not_null` on composite/surrogate key, join cardinality validation | `dbt_utils.expression_is_true` for logical invariants |
-| **Marts** | `fct_`, `dim_`, `rpt_` | `unique` & `not_null` on primary key, `relationships` on foreign keys | `dbt_expectations.expect_column_values_to_be_between` for numeric metrics |
+## 3. Signal-Driven Staging Layer Testing (`staging`)
+
+Before generating Staging tests, consume source metadata signals from `sources.yml` (via `dbt-source-discovery`) and delegate profiling statistics to profiling tools (e.g. `profiling-tables`).
+
+### Autonomous Staging Decision Table
+
+| Attribute Category | Profiling / Metadata Signal | Autonomous Test Action |
+| :--- | :--- | :--- |
+| **Primary Key (Clean)** | `meta.ingestion_type: full_reload` OR 100% Unique / 0% Nulls in profiling. | Apply `unique` & `not_null` (`severity: error`). |
+| **Primary Key (CDC / Appends)** | `meta.ingestion_type: cdc` OR `delivery_guarantee: at_least_once`. | **DO NOT place `unique` test on raw source.** Apply `unique` test ONLY on the window-deduplicated Staging model. |
+| **Foreign Key (Clean)** | Column ends in `_id`; Anti-join orphan rate against parent model = 0%. | Apply `relationships` (`severity: error`). |
+| **Foreign Key (Ambiguous / Orphans)** | Anti-join orphan rate > 0% (e.g., 0.1% orphaned records). | Apply `relationships` with **`severity: warn`** AND prompt user to confirm if orphans are expected. |
+| **Categorical Attribute** | Distinct count $\le 20$ representing > 95% of rows. | Apply `accepted_values` with **`severity: warn`**.<br>*(Pair with defensive `CASE WHEN ... ELSE 'other'` in Staging SQL)*. |
+| **Descriptive / Metadata** | High distinct count (> 100), max length > 50 chars, free-text notes/descriptions. | **EXPLICITLY SKIP** generic assertions (`not_null`, `accepted_values`) to prevent brittle test bloat. |
 
 ---
 
-## 3. Generic vs. Singular Tests
+## 4. Marts & Intermediate Layer Testing (Unit Tests & Contracts)
 
-### Generic Tests (Preferred by Default)
-Defined inline in `schema.yml`. Always use generic tests for standard column assertions:
-- Standard dbt built-ins: `unique`, `not_null`, `relationships`, `accepted_values`.
-- Package generic tests: `dbt_utils`, `dbt_expectations`.
-
-### Singular Tests (Custom SQL)
-Created as `.sql` files inside the `tests/` directory. Use singular tests ONLY when:
-- Testing complex multi-table business logic that cannot be expressed as a generic test (e.g., "Total order payments across payment methods must equal order total amount").
-- Asserting zero-row conditions for illegal states (e.g., "Shipped date cannot precede ordered date").
-
----
-
-## 4. Test Severity & Thresholds
-
-Configure test severity in `schema.yml` to differentiate between pipeline breakers and warnings:
+### A. $0-Cost dbt 1.8+ Unit Tests (`unit_tests:`)
+Use in-memory Unit Tests to validate complex SQL logic (CASE statements, window functions, business math) without executing warehouse data queries:
 
 ```yaml
-columns:
-  - name: order_id
-    tests:
-      - unique:
-          severity: error
-      - not_null:
-          severity: error
-
-  - name: discount_amount_usd
-    tests:
-      - dbt_utils.expression_is_true:
-          expression: "discount_amount_usd >= 0"
-          severity: warn
-          warn_if: ">10"  # Allow up to 10 anomalous rows before warning
+unit_tests:
+  - name: test_order_discount_calculation
+    model: fct_orders
+    given:
+      - input: ref('stg_ecommerce__orders')
+        rows:
+          - {order_id: '1', subtotal_amount_usd: 100.0, discount_amount_usd: 10.0}
+    expect:
+      rows:
+        - {order_id: '1', final_amount_usd: 90.0}
 ```
 
-- **`severity: error` (Default)**: Use for Primary Key uniqueness, non-null constraints, and mandatory foreign keys. Halts CI/CD pipelines.
-- **`severity: warn`**: Use for non-critical metrics, soft data quality checks, or known data drift issues under investigation.
-
----
-
-## 5. Data Contracts & Documentation
-
-For critical Marts models shared with external teams or BI tools, enable **Data Contracts**:
+### B. Public Data Contracts (`contract: enforced: true`)
+For Marts models consumed by BI tools, reverse ETL, or external teams, enforce Data Contracts:
 
 ```yaml
 models:
@@ -93,27 +89,45 @@ models:
     columns:
       - name: order_id
         data_type: string
-        description: "Primary key of the order."
         tests:
-          - unique
-          - not_null
+          - unique:
+              severity: error
+          - not_null:
+              severity: error
 ```
 
 ---
 
-## 6. Templates & Code References
+## 5. Statistical Anomaly & Proportion Testing
 
-- See [Schema Test Template](./examples/schema_template.yml) for complete YAML syntax.
-- See [Testing Strategy Reference](./references/testing_strategy.md) for CI execution guidelines.
+To detect silent data pipeline bugs (e.g., an API bug causing 90% of events to get stuck in `processing`), apply volumetric & ratio tests on key business metrics:
+
+```yaml
+models:
+  - name: fct_orders
+    columns:
+      - name: order_status
+        tests:
+          - dbt_expectations.expect_column_proportions_to_be_between:
+              row_condition: "ordered_at >= current_date() - interval '1 day'"
+              partition_column: order_status
+              values: ['delivered', 'shipped']
+              min_value: 0.70
+              max_value: 0.95
+              severity: warn
+```
 
 ---
 
-## 7. Test Verification Checklist
+## 6. Performance & Cost Optimization Rules
 
-Before merging a model:
+1. **BAN Heavy Tests on Views**: NEVER place `unique` or `relationships` tests on complex `view` or `ephemeral` models (which re-execute multi-table joins for every test). Move tests to raw `staging` or materialized `table`/`incremental` Marts.
+2. **Restrict `dbt_utils.equality`**: Use `equality` ONLY during temporary migration PRs. Remove before merging to production.
+3. **Scope Date Range Tests**: When `meta.retention_days` is present on a source, scope date tests to `WHERE _loaded_at >= current_date() - interval '<retention_days> day'`.
 
-- [ ] Primary key has both `unique` and `not_null` tests.
-- [ ] Foreign keys have `relationships` tests linking to valid parent models.
-- [ ] Status/Enum columns have `accepted_values` defined.
-- [ ] Severity levels are explicitly specified (`error` vs `warn`).
-- [ ] Test command succeeds locally (`dbt test --select <model_name>`).
+---
+
+## 7. References & Templates
+
+- See [Testing Decision Matrix Reference](./references/testing_decision_matrix.md) for profiling signal lookup.
+- See [Schema Test Template](./examples/schema_template.yml) for complete YAML syntax.
